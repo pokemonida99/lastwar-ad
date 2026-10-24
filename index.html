@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#3b3f45">
+<title>末日小隊</title>
+<style>
+  :root {
+    --blue: #2f8bf0; --blue-d: #1559b8; --red: #e5383b; --red-d: #9e1c1f;
+    --ink: #1d2230; --paper: #f4efe4;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #2b2e33; overflow: hidden;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: none; }
+  body { font-family: "Arial Black", "PingFang TC", "Heiti TC", "Microsoft JhengHei", sans-serif; color: #fff; }
+  img { -webkit-user-drag: none; pointer-events: none; }
+  #game { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+    width: min(100vw, 56.25vh); overflow: hidden; background: #8a8580; }
+  #game canvas { display: block; width: 100%; height: 100%; }
+  .layer { position: absolute; inset: 0; pointer-events: none; }
+
+  /* 頭上人數牌 */
+  .badge { position: absolute; transform: translate(-50%, -100%); padding: 2px 12px 3px; min-width: 52px; text-align: center;
+    font-size: 26px; line-height: 1.15; font-weight: 900; color: #fff; background: var(--blue);
+    border: 3px solid var(--blue-d); border-radius: 3px; text-shadow: 0 2px 0 rgba(0,0,0,.35); white-space: nowrap; }
+  .badge::after { content: ''; position: absolute; left: 50%; bottom: -11px; transform: translateX(-50%);
+    border: 8px solid transparent; border-top-color: var(--blue-d); border-bottom: 0; }
+  .badge.red { background: var(--red); border-color: var(--red-d); font-size: 18px; min-width: 40px; padding: 0 8px 1px; }
+  .badge.red::after { border-top-color: var(--red-d); bottom: -10px; }
+  .badge.hide { display: none; }
+  .badge.bump { animation: bump .25s ease-out; }
+  @keyframes bump { 0% { transform: translate(-50%, -100%) scale(1.35); } 100% { transform: translate(-50%, -100%) scale(1); } }
+
+  .pop { position: absolute; transform: translate(-50%, -100%); font-size: 30px; font-weight: 900; white-space: nowrap;
+    -webkit-text-stroke: 2px #123a7a; paint-order: stroke fill; animation: pop 0.9s ease-out forwards; }
+  .pop.neg { -webkit-text-stroke-color: #6e1012; color: #ffd4d4; }
+  @keyframes pop { 0% { opacity: 0; margin-top: 10px; } 15% { opacity: 1; } 100% { opacity: 0; margin-top: -60px; } }
+
+  /* Boss 血條 */
+  #bossbar { position: absolute; left: 50%; top: 64px; transform: translateX(-50%); width: 62%; display: none; }
+  #bossbar .nm { font-size: 13px; text-align: center; margin-bottom: 3px; text-shadow: 0 2px 0 #000; }
+  #bossbar .bar { height: 14px; background: #3a0d0f; border: 2px solid #111; }
+  #bossbar .fill { height: 100%; width: 100%; background: var(--red); transition: width .15s; }
+
+  /* 上方：關卡與進度 */
+  #top { position: absolute; left: 10px; right: 10px; top: max(10px, env(safe-area-inset-top)); display: flex; align-items: center; gap: 10px; }
+  #lvl { font-size: 16px; padding: 3px 10px; background: rgba(20,22,28,.78); border: 2px solid #000; border-radius: 3px; white-space: nowrap; }
+  #prog { flex: 1; height: 10px; background: rgba(20,22,28,.6); border: 2px solid #000; }
+  #prog i { display: block; height: 100%; width: 0; background: #ffd23d; }
+  .btn-sq { pointer-events: auto; width: 40px; height: 40px; display: grid; place-items: center; background: #f2f2f2;
+    border: 2px solid #222; border-radius: 3px; box-shadow: 0 3px 0 #222; cursor: pointer; }
+  .btn-sq svg { width: 22px; height: 22px; }
+  #back { position: absolute; left: 12px; bottom: max(12px, env(safe-area-inset-bottom)); }
+  #mute { position: absolute; right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); }
+  #hint { position: absolute; left: 0; right: 0; bottom: 70px; text-align: center; font-size: 18px; text-shadow: 0 2px 0 #000, 0 0 8px #000; }
+  #hint .hand { display: inline-block; animation: swipe 1.2s ease-in-out infinite alternate; }
+  @keyframes swipe { from { transform: translateX(-40px); } to { transform: translateX(40px); } }
+
+  /* 封面與結算 */
+  .screen { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: flex-end;
+    padding-bottom: 14vh; pointer-events: auto; background: rgba(15,17,22,.45); }
+  .screen.on { display: flex; }
+  .title { font-size: 46px; letter-spacing: 2px; color: #ffd23d; -webkit-text-stroke: 3px #3a2400; paint-order: stroke fill;
+    text-shadow: 0 5px 0 #3a2400; margin-bottom: 4px; }
+  .sub { font-size: 15px; margin-bottom: 26px; text-shadow: 0 2px 0 #000; }
+  .levels { display: flex; gap: 10px; margin-bottom: 18px; }
+  .lv { width: 64px; height: 56px; display: grid; place-items: center; font-size: 15px; background: #3c4250; border: 2px solid #000;
+    border-radius: 3px; box-shadow: 0 4px 0 #000; cursor: pointer; }
+  .lv.cur { background: var(--blue); }
+  .lv.lock { opacity: .4; cursor: default; }
+  .big { min-width: 200px; padding: 12px 26px; font: inherit; font-size: 24px; color: #fff; background: #36b24a; border: 3px solid #0f4a1a;
+    border-radius: 4px; box-shadow: 0 5px 0 #0f4a1a; cursor: pointer; }
+  .big:active { transform: translateY(3px); box-shadow: 0 2px 0 #0f4a1a; }
+  .big.alt { background: #4b5263; border-color: #1a1d24; box-shadow: 0 5px 0 #1a1d24; font-size: 17px; min-width: 140px; margin-top: 12px; }
+  .res { font-size: 52px; -webkit-text-stroke: 3px #000; paint-order: stroke fill; text-shadow: 0 5px 0 #000; }
+  .res.win { color: #ffd23d; }
+  .res.lose { color: #ff5a5f; }
+  .resd { font-size: 17px; margin: 6px 0 24px; text-shadow: 0 2px 0 #000; }
+</style>
+</head>
+<body>
+<div id="game">
+  <div class="layer" id="marks"></div>
+  <div class="layer" id="hud">
+    <div id="top"><div id="lvl">第 1 關</div><div id="prog"><i></i></div></div>
+    <div id="bossbar"><div class="nm">BOSS</div><div class="bar"><div class="fill"></div></div></div>
+    <div id="hint"><span class="hand">◀ 按住左右拖曳 ▶</span></div>
+    <div class="btn-sq" id="back" title="回封面"><svg viewBox="0 0 24 24"><path d="M20 10H8.8l4.6-4.6L11 3 2 12l9 9 2.4-2.4L8.8 14H20z" fill="#222"/></svg></div>
+    <div class="btn-sq" id="mute" title="聲音"><svg viewBox="0 0 24 24"><path id="muteIcon" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4z" fill="#222"/></svg></div>
+  </div>
+  <div class="screen on" id="cover">
+    <div class="title" id="gTitle">末日小隊</div>
+    <div class="sub" id="gSub"></div>
+    <div class="levels" id="levels"></div>
+    <button class="big" id="play">開始</button>
+  </div>
+  <div class="screen" id="result">
+    <div class="res" id="resT">勝利</div>
+    <div class="resd" id="resD"></div>
+    <button class="big" id="resGo">下一關</button>
+    <button class="big alt" id="resHome">回封面</button>
+  </div>
+</div>
+<script>
+  // 擋放大與選取：連點、兩指、Ctrl＋滾輪、長按選單
+  ['gesturestart', 'gesturechange', 'dblclick', 'contextmenu', 'selectstart', 'dragstart'].forEach((t) =>
+    document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+  addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && ['+', '-', '=', '0'].includes(e.key)) e.preventDefault(); });
+  if (!(window.HTMLScriptElement && HTMLScriptElement.supports && HTMLScriptElement.supports('importmap'))) {
+    const sc = document.createElement('script'); sc.async = true; sc.src = 'vendor/es-module-shims.js'; document.head.appendChild(sc);
+  }
+</script>
+<script type="importmap">
+{"imports":{"three":"./vendor/three/build/three.module.min.js","three/addons/":"./vendor/three/examples/jsm/"}}
+</script>
+<script type="module" src="js/main.js?v=0.1.0"></script>
+</body>
+</html>
