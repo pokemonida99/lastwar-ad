@@ -3,8 +3,8 @@
 // 世界座標：前進方向是 -z，馬路中線 x=0。
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { CONFIG, TRACKS } from './data.js';
-import { parseGate } from './calc.js';
+import { CONFIG, TRACKS } from './data.js?v=0.4.0';
+import { parseGate } from './calc.js?v=0.4.0';
 
 const ROAD = 6;            // 馬路半寬
 const WALK = 4;            // 人行道寬
@@ -606,7 +606,9 @@ addEventListener('keyup', (e) => { keys[e.key] = false; });
 
 // ---------- 遊戲迴圈 ----------
 function nearestTarget() {
-  let best = null, bd = CONFIG.range;
+  // 射程從隊伍最前排算，人很多時才打得到停在隊伍外圍的 Boss
+  const front = squadRadius(soldiers.length) * 0.8;
+  let best = null, bd = CONFIG.range + front;
   for (const h of hordes) {
     if (!h.zs.some((zb) => zb.alive)) continue;
     const d = sq.z - h.z;
