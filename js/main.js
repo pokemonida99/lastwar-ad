@@ -3,7 +3,8 @@
 // 世界座標：前進方向是 -z，馬路中線 x=0。
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { CONFIG, LEVELS } from './data.js';
+import { CONFIG, TRACKS } from './data.js';
+import { parseGate } from './calc.js';
 
 const ROAD = 6;            // 馬路半寬
 const WALK = 4;            // 人行道寬
@@ -234,9 +235,12 @@ const sfx = {
 // ---------- 關卡狀態 ----------
 let world = null;          // 這關的場景物件
 let L = null;              // 目前關卡資料
-let levelIdx = 0;
-let unlocked = 1;
-try { unlocked = clamp(+localStorage.getItem('lastwar-ad-unlocked') || 1, 1, LEVELS.length); } catch {}
+let trackIdx = 0, levelIdx = 0;
+// 每個版本各自解鎖到第幾關
+const progress = {};
+try { Object.assign(progress, JSON.parse(localStorage.getItem('lastwar-ad-progress') || '{}')); } catch {}
+const unlockedIn = (t) => clamp(progress[TRACKS[t].id] || 1, 1, TRACKS[t].levels.length);
+try { trackIdx = clamp(+localStorage.getItem('lastwar-ad-track') || 0, 0, TRACKS.length - 1); } catch {}
 let state = 'cover';       // cover | ready | run | win | lose
 const sq = { x: 0, z: 0, tx: 0, speed: 0, heroFall: 0 };
 let soldiers = [], fallers = [], hordes = [], gates = [], traps = [], boss = null;
@@ -365,56 +369,49 @@ function buildStreet(len, crossings) {
 }
 
 // ---------- 門 ----------
-// 門可以寫成 ['+', 10]，或寫成算式字串 '+ 6×7'、'× √(7+9)'：開頭是 + − × ÷，後面算出來的數字就是門的值
-const OPS = { '+': '+', '-': '−', x: '×', '/': '÷' };
-const goodOp = (op) => op === '+' || op === 'x';
-function calc(src) {
-  const t = src.replace(/\s+/g, '').replace(/[xX*]/g, '×').replace(/[\/]/g, '÷').replace(/-/g, '−');
-  let i = 0;
-  const num = () => { const m = /^\d+(\.\d+)?/.exec(t.slice(i)); if (!m) throw new Error(`算式看不懂：${src}`); i += m[0].length; return +m[0]; };
-  const factor = () => {
-    if (t[i] === '√') { i++; return Math.sqrt(factor()); }
-    if (t[i] === '(') { i++; const v = expr(); i++; return v; }
-    return num();
-  };
-  const term = () => { let v = factor(); while (t[i] === '×' || t[i] === '÷') { const o = t[i++]; const r = factor(); v = o === '×' ? v * r : v / r; } return v; };
-  const expr = () => { let v = term(); while (t[i] === '+' || t[i] === '−') { const o = t[i++]; const r = term(); v = o === '+' ? v + r : v - r; } return v; };
-  const v = expr();
-  if (i < t.length) throw new Error(`算式看不懂：${src}`);
-  return v;
-}
-function parseGate(spec) {
-  if (Array.isArray(spec)) return { op: spec[0], v: spec[1], label: `${OPS[spec[0]]} ${spec[1]}` };
-  const head = spec.trim()[0];
-  const op = { '+': '+', '-': '-', '−': '-', '×': 'x', x: 'x', '÷': '/', '/': '/' }[head];
-  const body = spec.trim().slice(1).trim();
-  return { op, v: Math.floor(calc(body) + 1e-9), label: `${OPS[op]} ${body.replace(/[xX*]/g, '×').replace(/-/g, '−')}` };
+// 門的算式在 calc.js：顏色只看開頭符號，實際加減看算出來的數字（藍門會倒扣、紅門會反加）
+const OPS_CH = '+−×÷';
+// 長算式拆兩行：找最靠近中間的運算符號斷開（不拆開括號裡面）
+function splitLabel(label) {
+  let best = -1, depth = 0;
+  for (let i = 2; i < label.length; i++) {
+    const c = label[i];
+    if (c === '(') depth++; else if (c === ')') depth--;
+    else if (depth === 0 && OPS_CH.includes(c) && (best < 0 || Math.abs(i - label.length / 2) < Math.abs(best - label.length / 2))) best = i;
+  }
+  return best < 0 ? [label] : [label.slice(0, best), label.slice(best)];
 }
 function gatePanel(gate, w) {
-  const good = goodOp(gate.op);
-  const tex = canvasTex(512, 128, (g, cw, ch) => {
+  const good = gate.blue;
+  // 先試一行；壓到 7 成還放不下就拆兩行，門板變高
+  const probe = document.createElement('canvas').getContext('2d');
+  probe.font = '900 84px "Arial Black", "PingFang TC", sans-serif';
+  const lines = probe.measureText(gate.label).width * 0.7 > 512 - 44 ? splitLabel(gate.label) : [gate.label];
+  const CH = lines.length > 1 ? 210 : 128;
+  const tex = canvasTex(512, CH, (g, cw, ch) => {
     g.fillStyle = good ? 'rgba(60,150,255,0.72)' : 'rgba(235,60,60,0.72)';
     g.fillRect(6, 6, cw - 12, ch - 12);
     g.fillStyle = 'rgba(255,255,255,0.22)'; g.fillRect(6, 6, cw - 12, 30);
     g.strokeStyle = good ? 'rgba(200,235,255,0.95)' : 'rgba(255,215,215,0.95)'; g.lineWidth = 7; g.strokeRect(6, 6, cw - 12, ch - 12);
     g.textAlign = 'center'; g.textBaseline = 'middle';
     // 算式長就先把字壓扁（最多 6 成寬），還放不下才縮小字
-    const maxW = cw - 44;
-    let size = 92, sx = 1;
-    for (;;) {
-      g.font = `900 ${size}px "Arial Black", "PingFang TC", sans-serif`;
-      const tw = g.measureText(gate.label).width;
-      sx = Math.min(1, maxW / tw);
-      if (sx >= 0.6 || size <= 48) break;
-      size -= 4;
-    }
-    g.save(); g.translate(cw / 2, ch / 2 + 4); g.scale(sx, 1);
-    g.lineWidth = 10; g.strokeStyle = good ? 'rgba(18,64,140,0.85)' : 'rgba(120,16,18,0.85)';
-    g.strokeText(gate.label, 0, 0); g.fillStyle = '#fff'; g.fillText(gate.label, 0, 0);
-    g.restore();
+    const maxW = cw - 44, lh = ch / lines.length;
+    lines.forEach((line, k) => {
+      let size = lines.length > 1 ? 84 : 92, sx = 1;
+      for (;;) {
+        g.font = `900 ${size}px "Arial Black", "PingFang TC", sans-serif`;
+        sx = Math.min(1, maxW / g.measureText(line).width);
+        if (sx >= 0.6 || size <= 48) break;
+        size -= 4;
+      }
+      g.save(); g.translate(cw / 2, lh * (k + 0.5) + (lines.length > 1 ? (k ? -6 : 8) : 4)); g.scale(sx, 1);
+      g.lineWidth = 10; g.strokeStyle = good ? 'rgba(18,64,140,0.85)' : 'rgba(120,16,18,0.85)';
+      g.strokeText(line, 0, 0); g.fillStyle = '#fff'; g.fillText(line, 0, 0);
+      g.restore();
+    });
   });
   tex.userData.own = true;
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 4), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w * CH / 512), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
   m.rotation.x = -0.55;
   m.renderOrder = 2;
   // 亮晶晶
@@ -503,8 +500,8 @@ function addBoss(it) {
 }
 
 // ---------- 開局 ----------
-function startLevel(i) {
-  levelIdx = i; L = LEVELS[i];
+function startLevel(t, i) {
+  trackIdx = t; levelIdx = i; L = TRACKS[t].levels[i];
   clearWorld();
   soldiers = []; fallers = []; hordes = []; gates = []; traps = []; boss = null; bullets = []; parts = [];
   splats = 0; splatMesh.count = 0; shotAcc = heroAcc = 0; endT = 0;
@@ -524,7 +521,7 @@ function startLevel(i) {
   Object.assign(sq, { x: 0, z: 0, tx: 0, speed: 0, heroFall: 0 });
   hero.rotation.set(0, 0, 0); hero.position.set(0, 0, 0);
   setCount(L.start, true);
-  $('lvl').textContent = L.name;
+  $('lvl').textContent = `${TRACKS[t].name} ${L.name}`;
   $('bossbar').style.display = 'none';
   $('hint').style.display = $('cover').classList.contains('on') ? 'none' : '';
   state = 'ready';
@@ -634,7 +631,7 @@ function fire(from, tgt) {
 }
 function hit(b) {
   if (b.tgt === boss) {
-    if (boss.hp > 0) { boss.hp -= CONFIG.bulletDamage; boss.flash = 0.08; if (Math.random() < 0.3) burst(b.tx, b.ty, b.tz, '#a0c495', 1); }
+    if (boss.hp > 0) { boss.hp -= CONFIG.bossBulletDamage; boss.flash = 0.08; if (Math.random() < 0.3) burst(b.tx, b.ty, b.tz, '#a0c495', 1); }
     return;
   }
   let zb = b.zb;
@@ -672,11 +669,10 @@ function update(dt) {
       g.used = true;
       const p = g.panels.find((q) => sq.x >= q.x0 - 0.3 && sq.x <= q.x1 + 0.3);
       if (p) {
-        const c = soldiers.length;
-        const next = p.op === '+' ? c + p.v : p.op === '-' ? c - p.v : p.op === 'x' ? c * p.v : Math.floor(c / p.v);
+        const c = soldiers.length, next = Math.min(CONFIG.maxCount, p.apply(c)), d = next - c;
         setCount(next);
-        pop(`${OPS[p.op]}${p.v}`, !goodOp(p.op));
-        sfx.gate(goodOp(p.op)); bumpBadge();
+        pop(d >= 0 ? `+${d}` : `−${-d}`, d < 0);   // 跳出實際加減多少，被騙了一看就知道
+        sfx.gate(d >= 0); bumpBadge();
         p.hit = true;
       }
     }
@@ -763,7 +759,7 @@ function update(dt) {
       if (!boss.active && running && sq.z - boss.z < 22) { boss.active = true; bb.style.display = 'block'; sfx.boss(); }
       if (boss.active && running) {
         const dx = sq.x - boss.x, dz = sq.z - boss.z, d = Math.hypot(dx, dz) || 1;
-        if (d > rs + 1.6) { boss.x += dx / d * 1.3 * dt; boss.z += dz / d * 1.3 * dt; }
+        if (d > rs + 1.6) { boss.x += dx / d * CONFIG.bossSpeed * dt; boss.z += dz / d * CONFIG.bossSpeed * dt; }
         boss.mesh.rotation.y = Math.atan2(dx, dz);
         if (d < rs + 2.2 && soldiers.length) {
           boss.hitT += dt * CONFIG.bossHitRate;
@@ -816,7 +812,11 @@ function update(dt) {
       state = 'lose'; endT = 0; sfx.lose();
     } else if (!enemies && sq.z <= -L.length) {
       state = 'win'; endT = 0; sfx.win();
-      if (levelIdx + 1 < LEVELS.length && unlocked < levelIdx + 2) { unlocked = levelIdx + 2; try { localStorage.setItem('lastwar-ad-unlocked', unlocked); } catch {} }
+      const id = TRACKS[trackIdx].id;
+      if (levelIdx + 1 < TRACKS[trackIdx].levels.length && unlockedIn(trackIdx) < levelIdx + 2) {
+        progress[id] = levelIdx + 2;
+        try { localStorage.setItem('lastwar-ad-progress', JSON.stringify(progress)); } catch {}
+      }
     }
   }
   if (state === 'win' || state === 'lose') {
@@ -920,31 +920,49 @@ function showCover() {
   $('hint').style.display = 'none';
   $('result').classList.remove('on');
   $('cover').classList.add('on');
-  const box = $('levels'); box.innerHTML = '';
-  LEVELS.forEach((lv, i) => {
+  const tabs = $('tracks'); tabs.innerHTML = '';
+  TRACKS.forEach((tr, t) => {
     const b = document.createElement('div');
-    b.className = 'lv' + (i === levelIdx ? ' cur' : '') + (i >= unlocked ? ' lock' : '');
+    b.className = 'tab' + (t === trackIdx ? ' cur' : '');
+    b.textContent = tr.name;
+    b.onclick = () => { if (t !== trackIdx) { pick(t, unlockedIn(t) - 1); } };
+    tabs.appendChild(b);
+  });
+  $('trackNote').textContent = TRACKS[trackIdx].note;
+  const box = $('levels'); box.innerHTML = '';
+  const open = unlockedIn(trackIdx);
+  TRACKS[trackIdx].levels.forEach((lv, i) => {
+    const b = document.createElement('div');
+    b.className = 'lv' + (i === levelIdx ? ' cur' : '') + (i >= open ? ' lock' : '');
     b.textContent = i + 1;
-    b.onclick = () => { if (i < unlocked) { levelIdx = i; showCover(); startLevel(i); state = 'cover'; } };
+    b.onclick = () => { if (i < open && i !== levelIdx) pick(trackIdx, i); };
     box.appendChild(b);
   });
 }
+function pick(t, i) {
+  try { localStorage.setItem('lastwar-ad-track', t); } catch {}
+  startLevel(t, i); showCover();
+}
 function showResult() {
-  const win = state === 'win', r = $('result');
-  $('resT').textContent = win ? '勝利！' : '失敗';
+  const win = state === 'win', r = $('result'), tr = TRACKS[trackIdx];
+  const last = levelIdx + 1 >= tr.levels.length, nextTrack = TRACKS[trackIdx + 1];
+  $('resT').textContent = win ? (last ? `${tr.name}全破！` : '勝利！') : '失敗';
   $('resT').className = 'res ' + (win ? 'win' : 'lose');
   $('resD').textContent = win ? `剩下 ${soldiers.length} 名士兵` : '小隊全滅了，換條路再試一次';
-  const last = levelIdx + 1 >= LEVELS.length;
-  $('resGo').textContent = win ? (last ? '從第 1 關再玩' : '下一關') : '再試一次';
-  $('resGo').onclick = () => { r.classList.remove('on'); startLevel(win ? (last ? 0 : levelIdx + 1) : levelIdx); };
+  let go;
+  if (!win) { $('resGo').textContent = '再試一次'; go = () => startLevel(trackIdx, levelIdx); }
+  else if (!last) { $('resGo').textContent = '下一關'; go = () => startLevel(trackIdx, levelIdx + 1); }
+  else if (nextTrack) { $('resGo').textContent = `挑戰${nextTrack.name}版`; go = () => startLevel(trackIdx + 1, unlockedIn(trackIdx + 1) - 1); }
+  else { $('resGo').textContent = '從小學再玩'; go = () => startLevel(0, 0); }
+  $('resGo').onclick = () => { r.classList.remove('on'); go(); };
   r.classList.add('on');
 }
 $('gTitle').textContent = CONFIG.title;
 $('gSub').textContent = CONFIG.subtitle;
 document.title = CONFIG.title;
-$('play').onclick = () => { audio(); $('cover').classList.remove('on'); startLevel(levelIdx); };
-$('resHome').onclick = () => { showCover(); startLevel(levelIdx); state = 'cover'; };
-$('back').onclick = () => { showCover(); startLevel(levelIdx); state = 'cover'; };
+$('play').onclick = () => { audio(); $('cover').classList.remove('on'); startLevel(trackIdx, levelIdx); };
+$('resHome').onclick = () => { startLevel(trackIdx, levelIdx); showCover(); };
+$('back').onclick = () => { startLevel(trackIdx, levelIdx); showCover(); };
 function drawMute() {
   $('muteIcon').setAttribute('d', muted
     ? 'M3 9v6h4l5 5V4L7 9H3zm13.6 3 2.7-2.7-1.4-1.4-2.7 2.7-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4z'
@@ -953,9 +971,7 @@ function drawMute() {
 $('mute').onclick = () => { muted = !muted; try { localStorage.setItem('lastwar-ad-mute', muted ? '1' : '0'); } catch {} drawMute(); audio(); };
 drawMute();
 
-levelIdx = Math.min(unlocked - 1, LEVELS.length - 1);
-startLevel(levelIdx);
-state = 'cover';
+startLevel(trackIdx, unlockedIn(trackIdx) - 1);
 showCover();
 
 // 測試用：網址加 ?fast=4 會快轉

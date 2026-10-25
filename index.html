@@ -64,8 +64,13 @@
   .title { font-size: 46px; letter-spacing: 2px; color: #ffd23d; -webkit-text-stroke: 3px #3a2400; paint-order: stroke fill;
     text-shadow: 0 5px 0 #3a2400; margin-bottom: 4px; }
   .sub { font-size: 15px; margin-bottom: 26px; text-shadow: 0 2px 0 #000; }
-  .levels { display: flex; gap: 10px; margin-bottom: 18px; }
-  .lv { width: 64px; height: 56px; display: grid; place-items: center; font-size: 15px; background: #3c4250; border: 2px solid #000;
+  .tabs { display: flex; margin-bottom: 8px; border: 2px solid #000; border-radius: 3px; box-shadow: 0 4px 0 #000; overflow: hidden; }
+  .tab { width: 84px; padding: 9px 0; text-align: center; font-size: 18px; background: #3c4250; cursor: pointer; }
+  .tab + .tab { border-left: 2px solid #000; }
+  .tab.cur { background: #ffd23d; color: #2a1a00; }
+  .note { font-size: 13px; margin: 6px 0 14px; text-shadow: 0 2px 0 #000; opacity: .9; }
+  .levels { display: flex; gap: 8px; margin-bottom: 18px; }
+  .lv { width: 50px; height: 50px; display: grid; place-items: center; font-size: 15px; background: #3c4250; border: 2px solid #000;
     border-radius: 3px; box-shadow: 0 4px 0 #000; cursor: pointer; }
   .lv.cur { background: var(--blue); }
   .lv.lock { opacity: .4; cursor: default; }
@@ -92,6 +97,8 @@
   <div class="screen on" id="cover">
     <div class="title" id="gTitle">末日小隊</div>
     <div class="sub" id="gSub"></div>
+    <div class="tabs" id="tracks"></div>
+    <div class="note" id="trackNote"></div>
     <div class="levels" id="levels"></div>
     <button class="big" id="play">開始</button>
   </div>
@@ -116,6 +123,6 @@
 <script type="importmap">
 {"imports":{"three":"./vendor/three/build/three.module.min.js","three/addons/":"./vendor/three/examples/jsm/"}}
 </script>
-<script type="module" src="js/main.js?v=0.2.0"></script>
+<script type="module" src="js/main.js?v=0.3.0"></script>
 </body>
 </html>
