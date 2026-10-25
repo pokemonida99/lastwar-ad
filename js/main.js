@@ -365,20 +365,53 @@ function buildStreet(len, crossings) {
 }
 
 // ---------- 門 ----------
-const OPS = { '+': '+', '-': '-', x: '×', '/': '÷' };
+// 門可以寫成 ['+', 10]，或寫成算式字串 '+ 6×7'、'× √(7+9)'：開頭是 + − × ÷，後面算出來的數字就是門的值
+const OPS = { '+': '+', '-': '−', x: '×', '/': '÷' };
 const goodOp = (op) => op === '+' || op === 'x';
-function gatePanel(op, v, w) {
-  const good = goodOp(op);
+function calc(src) {
+  const t = src.replace(/\s+/g, '').replace(/[xX*]/g, '×').replace(/[\/]/g, '÷').replace(/-/g, '−');
+  let i = 0;
+  const num = () => { const m = /^\d+(\.\d+)?/.exec(t.slice(i)); if (!m) throw new Error(`算式看不懂：${src}`); i += m[0].length; return +m[0]; };
+  const factor = () => {
+    if (t[i] === '√') { i++; return Math.sqrt(factor()); }
+    if (t[i] === '(') { i++; const v = expr(); i++; return v; }
+    return num();
+  };
+  const term = () => { let v = factor(); while (t[i] === '×' || t[i] === '÷') { const o = t[i++]; const r = factor(); v = o === '×' ? v * r : v / r; } return v; };
+  const expr = () => { let v = term(); while (t[i] === '+' || t[i] === '−') { const o = t[i++]; const r = term(); v = o === '+' ? v + r : v - r; } return v; };
+  const v = expr();
+  if (i < t.length) throw new Error(`算式看不懂：${src}`);
+  return v;
+}
+function parseGate(spec) {
+  if (Array.isArray(spec)) return { op: spec[0], v: spec[1], label: `${OPS[spec[0]]} ${spec[1]}` };
+  const head = spec.trim()[0];
+  const op = { '+': '+', '-': '-', '−': '-', '×': 'x', x: 'x', '÷': '/', '/': '/' }[head];
+  const body = spec.trim().slice(1).trim();
+  return { op, v: Math.floor(calc(body) + 1e-9), label: `${OPS[op]} ${body.replace(/[xX*]/g, '×').replace(/-/g, '−')}` };
+}
+function gatePanel(gate, w) {
+  const good = goodOp(gate.op);
   const tex = canvasTex(512, 128, (g, cw, ch) => {
     g.fillStyle = good ? 'rgba(60,150,255,0.72)' : 'rgba(235,60,60,0.72)';
     g.fillRect(6, 6, cw - 12, ch - 12);
     g.fillStyle = 'rgba(255,255,255,0.22)'; g.fillRect(6, 6, cw - 12, 30);
     g.strokeStyle = good ? 'rgba(200,235,255,0.95)' : 'rgba(255,215,215,0.95)'; g.lineWidth = 7; g.strokeRect(6, 6, cw - 12, ch - 12);
-    g.font = '900 92px "Arial Black", "PingFang TC", sans-serif';
     g.textAlign = 'center'; g.textBaseline = 'middle';
+    // 算式長就先把字壓扁（最多 6 成寬），還放不下才縮小字
+    const maxW = cw - 44;
+    let size = 92, sx = 1;
+    for (;;) {
+      g.font = `900 ${size}px "Arial Black", "PingFang TC", sans-serif`;
+      const tw = g.measureText(gate.label).width;
+      sx = Math.min(1, maxW / tw);
+      if (sx >= 0.6 || size <= 48) break;
+      size -= 4;
+    }
+    g.save(); g.translate(cw / 2, ch / 2 + 4); g.scale(sx, 1);
     g.lineWidth = 10; g.strokeStyle = good ? 'rgba(18,64,140,0.85)' : 'rgba(120,16,18,0.85)';
-    const s = `${OPS[op]} ${v}`;
-    g.strokeText(s, cw / 2, ch / 2 + 4); g.fillStyle = '#fff'; g.fillText(s, cw / 2, ch / 2 + 4);
+    g.strokeText(gate.label, 0, 0); g.fillStyle = '#fff'; g.fillText(gate.label, 0, 0);
+    g.restore();
   });
   tex.userData.own = true;
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, w / 4), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide }));
@@ -393,11 +426,11 @@ function gatePanel(op, v, w) {
   m.add(sp);
   return m;
 }
-function addGate(z, x0, x1, op, v, g) {
-  const w = x1 - x0, mesh = gatePanel(op, v, w);
+function addGate(z, x0, x1, spec, g) {
+  const gate = parseGate(spec), w = x1 - x0, mesh = gatePanel(gate, w);
   mesh.position.set((x0 + x1) / 2, 1.9, z);
   world.add(mesh);
-  g.panels.push({ x0, x1, op, v, mesh });
+  g.panels.push({ x0, x1, ...gate, mesh });
 }
 
 // ---------- 陷阱 ----------
@@ -480,8 +513,8 @@ function startLevel(i) {
     if (it.type === 'gate' || it.type === 'gates') {
       let g = gates.find((q) => q.z === -it.z);
       if (!g) { g = { z: -it.z, panels: [], used: false, fade: 0 }; gates.push(g); }
-      if (it.type === 'gate') addGate(-it.z, it.x - it.w / 2, it.x + it.w / 2, it.op, it.v, g);
-      else { addGate(-it.z, -ROAD + 0.15, -0.1, ...it.left, g); addGate(-it.z, 0.1, ROAD - 0.15, ...it.right, g); }
+      if (it.type === 'gate') addGate(-it.z, it.x - it.w / 2, it.x + it.w / 2, it.f || [it.op, it.v], g);
+      else { addGate(-it.z, -ROAD + 0.15, -0.1, it.left, g); addGate(-it.z, 0.1, ROAD - 0.15, it.right, g); }
     } else if (it.type === 'spikes') addSpikes(it);
     else if (it.type === 'holes') addHoles(it);
     else if (it.type === 'horde') { addHorde(it.x, -it.z, it.n); crossings.push(-it.z); }
@@ -934,4 +967,4 @@ renderer.setAnimationLoop(() => {
   for (let i = 0; i < FAST; i++) update(dt);
   render();
 });
-window.__game = { sq, get soldiers() { return soldiers; }, get state() { return state; }, get hordes() { return hordes; }, get boss() { return boss; }, get gates() { return gates; }, get traps() { return traps; }, stats, startLevel };
+window.__game = { sq, get soldiers() { return soldiers; }, get state() { return state; }, get hordes() { return hordes; }, get boss() { return boss; }, get gates() { return gates; }, get traps() { return traps; }, stats, step: (n, dt = 1 / 30) => { for (let i = 0; i < n; i++) update(dt); }, startLevel };
